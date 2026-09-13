@@ -1,0 +1,16 @@
+general:
+  upstream_dns: udp://1.1.1.1:53
+  bind_dns_over_udp: "0.0.0.0:53"
+  bind_http: "0.0.0.0:80"
+  bind_https: "0.0.0.0:443"
+  public_ipv4: "YOUR_SERVER_IP"
+  tls_cert: "/etc/sniproxy/certs/cert.pem"
+  tls_key: "/etc/sniproxy/certs/key.pem"
+
+acl:
+  domain:
+    enabled: true
+    priority: 20
+    path: /etc/sniproxy/domains.csv
+    refresh_interval: 1h0m0s
+log_level: "debug"

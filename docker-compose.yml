@@ -1,0 +1,14 @@
+services:
+  sniproxy:
+    image: ghcr.io/mosajjal/sniproxy:latest
+    container_name: sniproxy
+    restart: always
+    network_mode: host
+    environment:
+      - NO_COLOR=true
+    volumes:
+      - /opt/smartdns/sniproxy.yaml:/etc/sniproxy/sniproxy.yaml
+      - /opt/smartdns/domains.csv:/etc/sniproxy/domains.csv
+      - /tmp:/tmp
+      - /opt/smartdns/certs:/etc/sniproxy/certs
+    command: ["--config", "/etc/sniproxy/sniproxy.yaml"]
