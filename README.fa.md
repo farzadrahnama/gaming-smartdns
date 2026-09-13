@@ -466,7 +466,7 @@ Secondary DNS (دی‌ان‌اس دوم):  1.1.1.1 (یا 8.8.8.8)
 
   <p align="center" style="text-align: center;">
     <strong>طراحی و پیاده‌سازی توسط فرزاد رهنما</strong><br>
-    <a href="https://github.com/farzadrahnama"><img alt="GitHub: farzadrahnama" src="https://img.shields.io/badge/GitHub-farzadrahnama-24292e?style=flat-square&logo=github"></a>&nbsp;<a href="https://github.com/farzadrahnama/gaming-smartdns/issues"><img alt="Open Issues" src="https://img.shields.io/github/issues/farzadrahnama/gaming-smartdns?style=flat-square"></a><br>
+    <a href="https://github.com/farzadrahnama"><img alt="GitHub: farzadrahnama" src="https://img.shields.io/badge/GitHub-farzadrahnama-24292e?style=flat-square&logo=github"></a>&nbsp;<a href="https://www.linkedin.com/in/farzadrahnama/"><img alt="LinkedIn: farzadrahnama" src="https://img.shields.io/badge/LinkedIn-farzadrahnama-0A66C2?style=flat-square&logo=linkedin"></a>&nbsp;<a href="https://github.com/farzadrahnama/gaming-smartdns/issues"><img alt="Open Issues" src="https://img.shields.io/github/issues/farzadrahnama/gaming-smartdns?style=flat-square"></a><br>
     <sub>&copy; Farzad Rahnama. تحت لایسنس متن‌باز MIT منتشر شده است.</sub>
   </p>
 </div>
