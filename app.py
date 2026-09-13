@@ -1,3 +1,5 @@
+import re
+import os
 import sqlite3
 import secrets
 import subprocess
@@ -211,7 +213,7 @@ async def admin_dashboard(request: Request, current_admin: dict = Depends(get_cu
 
     active_ip_map = get_active_ip_timeouts()
     proto = request.headers.get("x-forwarded-proto", "https")
-    host_header = request.headers.get("host", "your-domain.com")
+    host_header = request.headers.get("host", "os.getenv("PANEL_DOMAIN", "localhost")")
     base_url = f"{proto}://{host_header}"
 
     rows = ""
@@ -360,7 +362,7 @@ async def admin_dashboard(request: Request, current_admin: dict = Depends(get_cu
         <div class="stats-bar">
             <div class="stat-box">
                 <div style="color:#94a3b8;font-size:0.8rem;">SERVER IP</div>
-                <div class="stat-val" style="color:#f8fafc;font-size:1.2rem;">YOUR_SERVER_IP</div>
+                <div class="stat-val" style="color:#f8fafc;font-size:1.2rem;">os.getenv("SERVER_IP", "127.0.0.1")</div>
             </div>
             <div class="stat-box">
                 <div style="color:#94a3b8;font-size:0.8rem;">MANAGED CLIENTS</div>
@@ -532,142 +534,261 @@ async def delete_subadmin(subadmin_id: int = Form(...), current_admin: dict = De
 # --- DEDICATED LIVE GAME CONNECTION LOGS ---
 
 @app.get("/admin/logs", response_class=HTMLResponse)
-async def view_game_logs(request: Request, current_admin: dict = Depends(get_current_admin)):
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT last_ip, name FROM users WHERE last_ip != 'None'")
-    ip_to_name = {row['last_ip']: row['name'] for row in c.fetchall()}
-    conn.close()
-
-    parsed_logs = []
+async def view_game_logs(request: Request):
+    import os
+    import re
+    import sqlite3
+    import subprocess
+    
     try:
-        res = subprocess.run(["docker", "logs", "--tail", "120", "sniproxy"], capture_output=True, text=True)
-        raw_logs = res.stdout + res.stderr
-        for line in raw_logs.splitlines():
-            # Strip all ANSI color codes
-            clean_line = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]|\[[0-9]{1,2}m', '', line).strip()
-            if not clean_line:
-                continue
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT last_ip, name FROM users WHERE last_ip IS NOT NULL AND last_ip != 'None'")
+        ip_to_name = {row['last_ip']: row['name'] for row in c.fetchall()}
+        conn.close()
 
-            # Identify target domain
-            domain_name = ""
-            if "for domain " in clean_line:
-                m = re.search(r'for domain\s+([^\s.]+)', clean_line)
-                if m:
-                    domain_name = m.group(1)
-            elif "sni=" in clean_line:
-                m = re.search(r'sni=([^\s]+)', clean_line)
-                if m:
-                    domain_name = m.group(1)
-            elif "host=" in clean_line:
-                m = re.search(r'host=([^\s]+)', clean_line)
-                if m:
-                    domain_name = m.group(1)
+        server_ip = "os.getenv("SERVER_IP", "127.0.0.1")"
+        all_entries = []
 
-            if not domain_name:
-                continue
+        # 1. Parse Live DNS Queries from smartdns_queries.log
+        dns_log_path = "/var/log/smartdns_queries.log"
+        if os.path.exists(dns_log_path):
+            try:
+                res_dns = subprocess.run(["tail", "-n", "120", dns_log_path], capture_output=True, text=True)
+                for line in res_dns.stdout.splitlines():
+                    line_str = line.strip()
+                    if not line_str:
+                        continue
+                    m = re.search(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}).*? IP ([0-9.]+)\.\d+ > [0-9.]+\.53:.*?(?:A\?|AAAA\?|HTTPS\?|\?)\s*([a-zA-Z0-9.-]+)\.', line_str)
+                    if not m:
+                        m = re.search(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}).*? IP ([0-9.]+)\.\d+ > [0-9.]+\.53:.*? ([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\.', line_str)
+                    if m:
+                        time_str, client_ip, domain = m.groups()
+                        if client_ip == server_ip:
+                            continue
+                        domain = domain.rstrip('.')
+                        user_name = ip_to_name.get(client_ip)
 
-            domain_name = domain_name.rstrip(".")
+                        lower = domain.lower()
+                        tag = "🌐 General"
+                        tag_color = "#64748b"
 
-            # Identify user by matching registered IPs
-            found_user = "Unknown / System"
-            for ip, name in ip_to_name.items():
-                if ip in clean_line:
-                    found_user = name
-                    break
+                        if any(k in lower for k in ['antigravity', 'cloudcode', 'run.app']):
+                            tag = "🤖 Antigravity"
+                            tag_color = "#38bdf8"
+                        elif any(k in lower for k in ['chatgpt', 'openai', 'oaistatic', 'oaiusercontent']):
+                            tag = "🤖 ChatGPT"
+                            tag_color = "#10b981"
+                        elif any(k in lower for k in ['gemini', 'bard', 'generativelanguage', 'aistudio', 'makersuite', 'deepmind']):
+                            tag = "🤖 Gemini"
+                            tag_color = "#06b6d4"
+                        elif any(k in lower for k in ['claude', 'anthropic']):
+                            tag = "🤖 Claude"
+                            tag_color = "#d97706"
+                        elif any(k in lower for k in ['activision', 'callofduty', 'demonware', 'atvi']):
+                            tag = "🎯 Call of Duty"
+                            tag_color = "#22c55e"
+                        elif any(k in lower for k in ['ea.com', 'origin.com', 'electronicarts']):
+                            tag = "⚡ EA / Apex"
+                            tag_color = "#f97316"
+                        elif any(k in lower for k in ['riotgames', 'pvp.net', 'leagueoflegends']):
+                            tag = "🛡️ Riot / Valorant"
+                            tag_color = "#ef4444"
+                        elif any(k in lower for k in ['battle.net', 'blizzard', 'battlenet']):
+                            tag = "⚔️ Blizzard"
+                            tag_color = "#0ea5e9"
+                        elif any(k in lower for k in ['epicgames', 'unrealengine']):
+                            tag = "🎮 Epic / Fortnite"
+                            tag_color = "#a855f7"
+                        elif 'discord' in lower:
+                            tag = "🎧 Discord"
+                            tag_color = "#6366f1"
+                        elif 'playstation' in lower:
+                            tag = "🎮 PlayStation"
+                            tag_color = "#0284c7"
 
-            # Categorize Game / Service
-            tag = "🌐 General"
-            tag_color = "#64748b"
-            lower = domain_name.lower()
+                        all_entries.append({
+                            'time': time_str,
+                            'user': user_name,
+                            'ip': client_ip,
+                            'domain': domain,
+                            'proto': 'DNS',
+                            'tag': tag,
+                            'color': tag_color
+                        })
+            except Exception:
+                pass
 
-            if any(k in lower for k in ["cloudcode", "antigravity", "generativelanguage", "openai", "chatgpt", "gemini", "claude", "aistudio", "deepmind"]):
-                tag = "🤖 AI Assistant"
-                tag_color = "#38bdf8"
-            elif any(k in lower for k in ["activision", "callofduty", "demonware", "atvi"]):
-                tag = "🎯 Call of Duty"
-                tag_color = "#22c55e"
-            elif any(k in lower for k in ["ea.com", "origin.com", "electronicarts"]):
-                tag = "⚡ EA / Apex"
-                tag_color = "#f97316"
-            elif any(k in lower for k in ["riotgames", "pvp.net", "leagueoflegends"]):
-                tag = "🛡️ Riot / Valorant"
-                tag_color = "#ef4444"
-            elif any(k in lower for k in ["battle.net", "blizzard"]):
-                tag = "⚔️ Blizzard"
-                tag_color = "#0ea5e9"
-            elif any(k in lower for k in ["epicgames", "unrealengine"]):
-                tag = "🎮 Epic / Fortnite"
-                tag_color = "#a855f7"
-            elif "discord" in lower:
-                tag = "🎧 Discord"
-                tag_color = "#6366f1"
+        # 2. Parse Live HTTPS / SNI from sniproxy docker container
+        try:
+            res_sni = subprocess.run(["docker", "logs", "--tail", "80", "sniproxy"], capture_output=True, text=True)
+            raw_logs = (res_sni.stdout or "") + (res_sni.stderr or "")
+            for line in raw_logs.splitlines():
+                line_str = line.strip()
+                if not line_str:
+                    continue
+                try:
+                    clean = re.sub(r'\[[0-9;]*[a-zA-Z]', '', line_str).strip()
+                    src_ip = None
+                    ip_m = re.search(r'(?:srcip|src|client|client_ip|from)[=:"]+([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})', clean)
+                    if ip_m and ip_m.group(1) not in [server_ip, '127.0.0.1', '1.1.1.1', '0.0.0.0']:
+                        src_ip = ip_m.group(1)
+                    if not src_ip:
+                        continue
 
-            time_str = clean_line[:19].replace("T", " ")
+                    domain = ""
+                    m = re.search(r'(?:sni|domain|question|host|qname|fqdn)[=:"]+([a-zA-Z0-9.-]+)', clean)
+                    if m:
+                        domain = m.group(1).rstrip('".')
+                    else:
+                        dm = re.search(r'([a-zA-Z0-9-]+\.(?:com|org|net|goog|app|io|ai|ir|de)[a-zA-Z0-9.-]*)', clean)
+                        if dm:
+                            domain = dm.group(1).rstrip('".')
+                    if not domain:
+                        continue
 
-            parsed_logs.append({
-                "time": time_str,
-                "user": found_user,
-                "domain": domain_name,
-                "tag": tag,
-                "color": tag_color
-            })
+                    user_name = ip_to_name.get(src_ip)
+                    lower = (domain + ' ' + clean).lower()
+                    tag = "🌐 General"
+                    tag_color = "#64748b"
+
+                    if any(k in lower for k in ['antigravity', 'cloudcode', 'run.app']):
+                        tag = "🤖 Antigravity"
+                        tag_color = "#38bdf8"
+                    elif any(k in lower for k in ['chatgpt', 'openai', 'oaistatic', 'oaiusercontent']):
+                        tag = "🤖 ChatGPT"
+                        tag_color = "#10b981"
+                    elif any(k in lower for k in ['gemini', 'bard', 'generativelanguage', 'aistudio', 'makersuite', 'deepmind']):
+                        tag = "🤖 Gemini"
+                        tag_color = "#06b6d4"
+                    elif any(k in lower for k in ['claude', 'anthropic']):
+                        tag = "🤖 Claude"
+                        tag_color = "#d97706"
+                    elif any(k in lower for k in ['activision', 'callofduty', 'demonware', 'atvi']):
+                        tag = "🎯 Call of Duty"
+                        tag_color = "#22c55e"
+                    elif any(k in lower for k in ['ea.com', 'origin.com', 'electronicarts']):
+                        tag = "⚡ EA / Apex"
+                        tag_color = "#f97316"
+                    elif any(k in lower for k in ['riotgames', 'pvp.net', 'leagueoflegends']):
+                        tag = "🛡️ Riot / Valorant"
+                        tag_color = "#ef4444"
+                    elif any(k in lower for k in ['battle.net', 'blizzard', 'battlenet']):
+                        tag = "⚔️ Blizzard"
+                        tag_color = "#0ea5e9"
+                    elif any(k in lower for k in ['epicgames', 'unrealengine']):
+                        tag = "🎮 Epic / Fortnite"
+                        tag_color = "#a855f7"
+                    elif 'discord' in lower:
+                        tag = "🎧 Discord"
+                        tag_color = "#6366f1"
+                    elif 'playstation' in lower:
+                        tag = "🎮 PlayStation"
+                        tag_color = "#0284c7"
+
+                    time_str = clean[:19].replace('T', ' ')
+                    all_entries.append({
+                        'time': time_str,
+                        'user': user_name,
+                        'ip': src_ip,
+                        'domain': domain,
+                        'proto': 'HTTPS',
+                        'tag': tag,
+                        'color': tag_color
+                    })
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        all_entries.sort(key=lambda x: x['time'], reverse=True)
+
+        log_rows = ""
+        for entry in all_entries[:120]:
+            col = entry['color']
+            tag_text = entry['tag']
+            badge = f"<span style='background:{col}22;color:{col};border:1px solid {col}55;padding:3px 8px;border-radius:6px;font-weight:bold;font-size:0.75rem;'>{tag_text}</span>"
+            proto_badge = f"<span style='background:#1e293b;color:#94a3b8;padding:2px 6px;border-radius:4px;font-size:0.7rem;font-weight:600;'>{entry['proto']}</span>"
+
+            if entry['user']:
+                user_html = f"<strong style='color:#38bdf8;font-size:0.95rem;'>{entry['user']}</strong><div style='font-size:0.72rem;color:#64748b;font-family:monospace;'>{entry['ip']}</div>"
+            elif entry['ip']:
+                user_html = f"<span style='color:#f59e0b;font-weight:600;font-size:0.85rem;'>Guest / IP</span><div style='font-size:0.72rem;color:#64748b;font-family:monospace;'>{entry['ip']}</div>"
+            else:
+                user_html = "<span style='color:#64748b;font-size:0.85rem;'>System</span>"
+
+            log_rows += f"""<tr>
+                <td style="color:#94a3b8;font-family:monospace;font-size:0.8rem;">{entry['time']}</td>
+                <td>{user_html}</td>
+                <td>{proto_badge}</td>
+                <td>{badge}</td>
+                <td><code style="color:#f8fafc;font-size:0.85rem;word-break:break-all;">{entry['domain']}</code></td>
+            </tr>"""
+
+        return f"""<!DOCTYPE html><html><head><title>Live Traffic Monitor</title><meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body {{ font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#0b0f19; color:#e2e8f0; margin:0; padding:25px; }}
+            .c {{ max-width:1200px; margin:0 auto; }}
+            .card {{ background:#161f30; border:1px solid #1e293b; border-radius:12px; padding:20px; box-shadow:0 4px 10px rgba(0,0,0,0.3); }}
+            table {{ width:100%; border-collapse:collapse; margin-top:15px; }}
+            th, td {{ padding:12px 10px; text-align:left; border-bottom:1px solid #1e293b; font-size:0.88rem; }}
+            th {{ color:#94a3b8; font-weight:600; }}
+            .nav-btn {{ background:#1e293b; color:#e2e8f0; text-decoration:none; padding:8px 14px; border-radius:8px; font-size:0.85rem; font-weight:600; display:inline-flex; align-items:center; }}
+            .nav-btn:hover {{ background:#334155; }}
+            #searchBox {{ padding:8px 12px; border-radius:8px; border:1px solid #334155; background:#0b0f19; color:#fff; font-size:0.85rem; width:260px; }}
+        </style>
+        <script>
+            function filterTable() {{
+                var query = document.getElementById('searchBox').value.toLowerCase();
+                var rows = document.querySelectorAll('#logsTable tbody tr');
+                rows.forEach(function(r) {{
+                    r.style.display = r.innerText.toLowerCase().includes(query) ? '' : 'none';
+                }});
+            }}
+            let autoRef = true;
+            function toggleAuto(cb) {{ autoRef = cb.checked; }}
+            setInterval(() => {{
+                var q = document.getElementById('searchBox') ? document.getElementById('searchBox').value : '';
+                if (autoRef && q === '') location.reload();
+            }}, 5000);
+        </script>
+        </head><body><div class="c">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
+                <div>
+                    <h1 style="color:#38bdf8;margin:0;font-size:1.6rem;">🎯 Live Traffic & AI Monitor</h1>
+                    <span style="font-size:0.85rem;color:#94a3b8;">Real-time stream of users connecting to Games, Antigravity & Web</span>
+                </div>
+                <div style="display:flex;gap:10px;align-items:center;">
+                    <input type="text" id="searchBox" onkeyup="filterTable()" placeholder="🔍 Filter user or domain...">
+                    <label style="font-size:0.82rem;color:#94a3b8;display:flex;align-items:center;gap:4px;cursor:pointer;">
+                        <input type="checkbox" checked onchange="toggleAuto(this)"> Auto (5s)
+                    </label>
+                    <a href="/admin" class="nav-btn">⬅ Back</a>
+                    <a href="/logout" class="nav-btn" style="background:#450a0a;color:#fca5a5;">🚪 Logout</a>
+                </div>
+            </div>
+
+            <div class="card">
+                <table id="logsTable">
+                    <thead>
+                        <tr>
+                            <th style="width:160px;">Timestamp</th>
+                            <th style="width:180px;">Client Name & IP</th>
+                            <th style="width:70px;">Type</th>
+                            <th style="width:160px;">Category</th>
+                            <th>Target Server / Domain</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {log_rows if log_rows else '<tr><td colspan="5" style="text-align:center;color:#64748b;padding:30px;">No activity recorded yet.</td></tr>'}
+                    </tbody>
+                </table>
+            </div>
+        </div></body></html>"""
     except Exception as e:
-        parsed_logs.append({"time": "-", "user": "Error", "domain": str(e), "tag": "Error", "color": "#ef4444"})
-
-    parsed_logs.reverse()
-
-    log_rows = ""
-    for entry in parsed_logs[:70]:
-        badge = f"<span style='background:{entry["color"]}22;color:{entry["color"]};border:1px solid {entry["color"]}55;padding:3px 8px;border-radius:6px;font-weight:bold;font-size:0.75rem;'>{entry["tag"]}</span>"
-        user_color = "#38bdf8" if entry['user'] != "Unknown / System" else "#64748b"
-        log_rows += f"""<tr>
-            <td style="color:#94a3b8;font-family:monospace;font-size:0.8rem;">{entry['time']}</td>
-            <td><strong style="color:{user_color};">{entry['user']}</strong></td>
-            <td>{badge}</td>
-            <td><code style="color:#f8fafc;font-size:0.85rem;">{entry['domain']}</code></td>
-        </tr>"""
-
-    return f"""<!DOCTYPE html><html><head><title>Live Traffic Logs</title><meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="refresh" content="5">
-    <style>
-        body {{ font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#0b0f19; color:#e2e8f0; margin:0; padding:25px; }}
-        .c {{ max-width:1180px; margin:0 auto; }}
-        .card {{ background:#161f30; border:1px solid #1e293b; border-radius:12px; padding:20px; box-shadow:0 4px 10px rgba(0,0,0,0.3); }}
-        table {{ width:100%; border-collapse:collapse; margin-top:10px; }}
-        th, td {{ padding:12px 10px; text-align:left; border-bottom:1px solid #1e293b; font-size:0.88rem; }}
-        th {{ color:#94a3b8; font-weight:600; }}
-        .nav-btn {{ background:#1e293b; color:#e2e8f0; text-decoration:none; padding:8px 14px; border-radius:8px; font-size:0.85rem; font-weight:600; display:inline-flex; align-items:center; }}
-        .nav-btn:hover {{ background:#334155; }}
-    </style></head><body><div class="c">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-            <div>
-                <h1 style="color:#38bdf8;margin:0;font-size:1.6rem;">🎯 Live Traffic Monitor</h1>
-                <span style="font-size:0.85rem;color:#94a3b8;">Real-time stream of users connecting to Games & AI (Auto-refreshes every 5s)</span>
-            </div>
-            <div style="display:flex;gap:10px;">
-                <a href="/admin" class="nav-btn">⬅ Back to Dashboard</a>
-                <a href="/admin/change-password" class="nav-btn" style="background:#334155;color:#fff;">🔑 Change Password</a>
-                <a href="/logout" class="nav-btn" style="background:#450a0a;color:#fca5a5;">🚪 Logout</a>
-            </div>
-        </div>
-
-        <div class="card">
-            <table>
-                <thead>
-                    <tr>
-                        <th style="width:170px;">Timestamp</th>
-                        <th style="width:160px;">Client Name</th>
-                        <th style="width:150px;">Category</th>
-                        <th>Target Server / Domain</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {log_rows if log_rows else '<tr><td colspan="4" style="text-align:center;color:#64748b;padding:30px;">No activity recorded yet.</td></tr>'}
-                </tbody>
-            </table>
-        </div>
-    </div></body></html>"""
+        import traceback
+        err_msg = traceback.format_exc()
+        return HTMLResponse(f"<html><body style='background:#0b0f19;color:#ef4444;padding:30px;font-family:monospace;'><div style='background:#161f30;border:1px solid #ef4444;border-radius:10px;padding:20px;'><h3>Error in Live Monitor:</h3><pre>{err_msg}</pre><a href='/admin' style='color:#38bdf8;'>Back to Dashboard</a></div></body></html>")
 
 
 # --- CLIENT STATUS & ACTIVATION PORTAL ---
@@ -729,7 +850,7 @@ async def activate(request: Request, token: str = ""):
     else:
         exp_display = "Active (Unlimited Validity)"
 
-    server_ip = "YOUR_SERVER_IP"
+    server_ip = "os.getenv("SERVER_IP", "127.0.0.1")"
 
     if is_allowed:
         status_banner = """<span style="background:#22c55e;color:#022c22;padding:6px 14px;border-radius:20px;font-weight:bold;font-size:0.85rem;">● ACCESS ACTIVATED</span>"""
